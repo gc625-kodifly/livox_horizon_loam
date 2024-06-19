@@ -102,6 +102,11 @@ pcl::PointCloud<PointType>::Ptr laserCloudFullRes(
     new pcl::PointCloud<PointType>());
 pcl::PointCloud<pcl::PointXYZRGB>::Ptr laserCloudFullResColor(
     new pcl::PointCloud<pcl::PointXYZRGB>());
+pcl::PointCloud<PointType>::Ptr laserCloudFullResIntensity(
+    new pcl::PointCloud<PointType>());
+pcl::PointCloud<PointType>::Ptr laserCloudWaitSave(
+    new pcl::PointCloud<PointType>());
+
 
 // points in every cube
 pcl::PointCloud<PointType>::Ptr laserCloudCornerArray[laserCloudNum];
@@ -164,6 +169,20 @@ void pointAssociateToMap(PointType const *const pi, PointType *const po) {
   po->intensity = pi->intensity;
   // po->intensity = 1.0;
 }
+
+void IntensityAssociateToMap(PointType const *const pi, pcl::PointXYZINormal *const po) {
+  // printf("pi: %f %f %f %f\n", pi->x, pi->y, pi->z, pi->intensity);
+
+  Eigen::Vector3d point_curr(pi->x, pi->y, pi->z);
+  Eigen::Vector3d point_w = q_w_curr * point_curr + t_w_curr;
+  po->x = point_w.x();
+  po->y = point_w.y();
+  po->z = point_w.z();
+  po->intensity = pi->curvature*10;
+  // po->intensity = 1.0;
+}
+
+
 
 void RGBpointAssociateToMap(PointType const *const pi,
                             pcl::PointXYZRGB *const po) {
@@ -906,11 +925,47 @@ void process() {
         laserCloudFullResColor->push_back(temp_point);
       }
 
+      laserCloudFullResIntensity->clear();
+      
+      for (int i = 0; i < laserCloudFullResNum; i++) {
+        PointType temp_point;
+        IntensityAssociateToMap(&laserCloudFullRes->points[i], &temp_point);
+        laserCloudFullResIntensity->push_back(temp_point);
+      }
+
+      // laserCloudFullResIntensity->clear();
+      
+      // for (int i = 0; i < laserCloudFullResNum; i++) {
+      //   pcl::PointXYZINormal temp_point;
+      //   IntensityAssociateToMap(&laserCloudFullRes->points[i], &temp_point);
+      //   laserCloudFullResIntensity->push_back(temp_point);
+      // }
+
+
+
+
+      *laserCloudWaitSave += *laserCloudFullResIntensity;
+
+
+
+
       sensor_msgs::PointCloud2 laserCloudFullRes3;
       pcl::toROSMsg(*laserCloudFullResColor, laserCloudFullRes3);
       laserCloudFullRes3.header.stamp = ros::Time().fromSec(timeLaserOdometry);
       laserCloudFullRes3.header.frame_id = "/camera_init";
       pubLaserCloudFullRes.publish(laserCloudFullRes3);
+
+
+      // pcl::PCDWriter pcd_writer;
+      // pcd_writer.writeBinary("/home/gabriel/loam_horizon_ws/src/livox_horizon_loam/PCD/registered/laserCloudMap_" 
+      // + std::to_string(laserCloudFullRes3.header.stamp.toSec()) + ".pcd", *laserCloudFullResIntensity);
+
+      // pcd_writer.writeBinary(std::string(ROOT_DIR)+"/PCD/raw/laserCloudMap_" 
+      // + std::to_string(laserCloudFullRes3.header.stamp.toSec()) + ".pcd", *laserCloudFullRes);
+      
+      
+
+
 
       printf("mapping pub time %f ms \n", t_pub.toc());
 
@@ -1009,6 +1064,13 @@ int main(int argc, char **argv) {
   std::thread mapping_process{process};
 
   ros::spin();
+
+  pcl::PCDWriter pcd_writer;
+
+
+  pcd_writer.writeBinary(std::string(ROOT_DIR) + "/PCD/PCD.pcd", *laserCloudWaitSave);
+
+  // pcd_writer.writeBinary("/home/gabriel/loam_horizon_ws/src/livox_horizon_loam/PCD/PCD.pcd", *laserCloudWaitSave);
 
   return 0;
 }
