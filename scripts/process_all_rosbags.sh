@@ -18,18 +18,25 @@ source /home/admin/workspace/devel/setup.bash
 for ROSBAG_FILE in "${ROSBAG_PATH}"/atc*.bag; do
     ROSBAG_FILE_NAME=$(basename "${ROSBAG_FILE}")
     ROSBAG_FILE_BASE="${ROSBAG_FILE_NAME%.bag}"  # Ensure .bag is removed from base name
-        
+
     # Check if PCD file already exists
     if [[ -f "${PCD_SAVE_DIR}/${ROSBAG_FILE_BASE}.pcd" ]]; then
         echo "PCD file for ${ROSBAG_FILE_NAME} already exists. Skipping..."
         continue  # Skip to the next iteration of the loop
     fi
 
+    START_TIME=$(date +%s)  # Record start time in seconds
+
     echo "Processing ${ROSBAG_FILE_NAME}"
     roslaunch loam_horizon loam_livox_horizon.launch \
     rosbag_dir:="${ROSBAG_PATH}" \
     rosbag_name:="${ROSBAG_FILE_NAME}" \
     pcd_save_path:="${PCD_SAVE_DIR}/${ROSBAG_FILE_BASE}.pcd" >> "${LOG_PATH}" 2>&1
+
+    END_TIME=$(date +%s)  # Record end time in seconds
+    ELAPSED_TIME=$((END_TIME - START_TIME))  # Calculate elapsed time
+
+    echo "Finished processing ${ROSBAG_FILE_NAME} in ${ELAPSED_TIME} seconds" >> "${LOG_PATH}"
 done
 
 # Clean exit point
