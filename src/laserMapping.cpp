@@ -1018,8 +1018,10 @@ int main(int argc, char **argv) {
 
   float lineRes = 0;
   float planeRes = 0;
+  std::string pcd_save_path;
   nh.param<float>("mapping_line_resolution", lineRes, 0.4);
   nh.param<float>("mapping_plane_resolution", planeRes, 0.8);
+  nh.param<std::string>("pcd_save_path",pcd_save_path,"/home/admin/workspace/src/PCD/PCD.pcd");
   printf("line resolution %f plane resolution %f \n", lineRes, planeRes);
   downSizeFilterCorner.setLeafSize(lineRes, lineRes, lineRes);
   downSizeFilterSurf.setLeafSize(planeRes, planeRes, planeRes);
@@ -1068,7 +1070,7 @@ int main(int argc, char **argv) {
   pcl::PCDWriter pcd_writer;
 
 
-  pcd_writer.writeBinary(std::string(ROOT_DIR) + "/PCD/PCD.pcd", *laserCloudWaitSave);
+  pcd_writer.writeBinary(pcd_save_path, *laserCloudWaitSave);
 
   // pcd_writer.writeBinary("/home/gabriel/loam_horizon_ws/src/livox_horizon_loam/PCD/PCD.pcd", *laserCloudWaitSave);
 
