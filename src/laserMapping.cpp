@@ -36,6 +36,8 @@
 #include <ceres/ceres.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <loam_horizon/common.h>
+#include <stdexcept>
+#include <laszip/laszip_api.h>
 #include <math.h>
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
@@ -43,6 +45,7 @@
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+#include <pcl/common/common.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <ros/ros.h>
 #include <sensor_msgs/Imu.h>
@@ -80,6 +83,16 @@ const int laserCloudNum =
 
 int laserCloudValidInd[125];
 int laserCloudSurroundInd[125];
+
+// color mapping param
+vector<double>       extrinT_lc(3, 0.0);
+vector<double>       extrinR_lc(9, 0.0);
+vector<double>       K_camera(9, 0.0);
+vector<double>       D_camera(5, 0.0);
+bool   camera_pushed = false;
+deque<sensor_msgs::ImagePtr>      camera_buffer;
+deque<double>                     camera_time_buffer;
+
 
 // input: from odom
 pcl::PointCloud<PointType>::Ptr laserCloudCornerLast(
@@ -148,6 +161,389 @@ ros::Publisher pubLaserCloudSurround, pubLaserCloudMap, pubLaserCloudFullRes,
     pubOdomAftMapped, pubOdomAftMappedHighFrec, pubLaserAfterMappedPath;
 
 nav_msgs::Path laserAfterMappedPath;
+
+static void dll_error(laszip_POINTER laszip) {
+    if (laszip) {
+        laszip_CHAR* error;
+        if (laszip_get_error(laszip, &error)) {
+            fprintf(stderr, "DLL ERROR: getting error messages\n");
+        }
+        if (error) {
+            fprintf(stderr, "DLL ERROR MESSAGE: %s\n", error);
+        } else {
+            fprintf(stderr, "DLL ERROR MESSAGE: unknown error\n");
+        }
+    }
+}
+// Function to print header information
+void printHeaderInfo(const laszip_header* header) {
+    std::cout << "Header Info:" << std::endl;
+    // std::cout << "File Signature: " << header->file_signature << std::endl;
+    std::cout << "File Source ID: " << header->file_source_ID << std::endl;
+    std::cout << "Global Encoding: " << header->global_encoding << std::endl;
+    std::cout << "Project ID GUID data: " << header->project_ID_GUID_data_1 << "-"
+              << header->project_ID_GUID_data_2 << "-"
+              << header->project_ID_GUID_data_3 << "-"
+              << header->project_ID_GUID_data_4 << std::endl;
+    std::cout << "Version Major.Minor: " << static_cast<int>(header->version_major) << "."
+              << static_cast<int>(header->version_minor) << std::endl;
+    std::cout << "System Identifier: " << header->system_identifier << std::endl;
+    std::cout << "Generating Software: " << header->generating_software << std::endl;
+    std::cout << "Number of Point Records: " << header->number_of_point_records << std::endl;
+    std::cout << "Number of Points by Return: " << header->number_of_points_by_return[0] << " "
+              << header->number_of_points_by_return[1] << " "
+              << header->number_of_points_by_return[2] << std::endl;
+    std::cout << "X Scale Factor: " << header->x_scale_factor << std::endl;
+    std::cout << "Y Scale Factor: " << header->y_scale_factor << std::endl;
+    std::cout << "Z Scale Factor: " << header->z_scale_factor << std::endl;
+    std::cout << "X Offset: " << header->x_offset << std::endl;
+    std::cout << "Y Offset: " << header->y_offset << std::endl;
+    std::cout << "Z Offset: " << header->z_offset << std::endl;
+    std::cout << "file_creation_day: " << header->file_creation_day << std::endl;
+    std::cout << "file_creation_year: " << header->file_creation_year << std::endl;
+    std::cout << "header_size: " << header->header_size << std::endl;
+    std::cout << "max x: " << header->max_x << std::endl;
+    std::cout << "min x: " << header->min_x << std::endl;
+    std::cout << "max y: " << header->max_y << std::endl;
+    std::cout << "min y: " << header->min_y << std::endl;
+    std::cout << "max z: " << header->max_z << std::endl;
+    std::cout << "min z: " << header->min_z << std::endl;
+
+}
+
+static void byebye(bool error=false, bool wait=false, laszip_POINTER laszip=0)
+{
+  if (error)
+  {
+    dll_error(laszip);
+  }
+  if (wait)
+  {
+    fprintf(stderr,"<press ENTER>\n");
+    getc(stdin);
+  }
+  exit(error);
+}
+// Function to read LAS/LAZ file and print header
+void readLASHeader(const char* filename) {
+    laszip_POINTER laszip_reader;
+    if (laszip_create(&laszip_reader)) {
+        throw std::runtime_error("DLL ERROR: creating laszip reader");
+    }
+
+    laszip_BOOL is_compressed = false;
+    if (laszip_open_reader(laszip_reader, filename, &is_compressed)) {
+        char* err_msg = nullptr;
+        laszip_get_error(laszip_reader, &err_msg);
+        std::string error = "DLL ERROR: opening laszip reader for '";
+        error += filename;
+        error += "' - ";
+        error += err_msg;
+        laszip_destroy(laszip_reader);
+        throw std::runtime_error(error);
+    }
+
+    laszip_header* header;
+    if (laszip_get_header_pointer(laszip_reader, &header)) {
+        laszip_destroy(laszip_reader);
+        throw std::runtime_error("DLL ERROR: getting header pointer from laszip reader");
+    }
+
+    // Print the header information
+    printHeaderInfo(header);
+
+    // Clean up
+    if (laszip_close_reader(laszip_reader)) {
+        laszip_destroy(laszip_reader);
+        throw std::runtime_error("DLL ERROR: closing laszip reader");
+    }
+
+    laszip_destroy(laszip_reader);
+}
+void pclToLaszip(const pcl::PointCloud<pcl::PointXYZINormal>::Ptr& cloud, const std::string& filename) {
+
+
+    int num_points = cloud->size();
+    // Variables to hold the min and max 3D coordinates
+    pcl::PointXYZINormal minPt, maxPt;
+
+    // Get the minimum and maximum points
+    pcl::getMinMax3D(*cloud, minPt, maxPt);
+    
+    std::cout << "Max x: " << maxPt.x << std::endl;
+    std::cout << "Max y: " << maxPt.y << std::endl;
+    std::cout << "Max z: " << maxPt.z << std::endl;
+    std::cout << "Min x: " << minPt.x << std::endl;
+    std::cout << "Min y: " << minPt.y << std::endl;
+    std::cout << "Min z: " << minPt.z << std::endl;
+    std::cout << "num pts: " << num_points << std::endl;
+
+    laszip_POINTER laszip_writer;
+
+    if (laszip_create(&laszip_writer))
+    {
+      fprintf(stderr,"DLL ERROR: creating laszip writer\n");
+      byebye(true, 1);
+    }
+
+    // get a pointer to the header of the writer so we can populate it
+
+    laszip_header* header;
+
+    if (laszip_get_header_pointer(laszip_writer, &header))
+    {
+      fprintf(stderr,"DLL ERROR: getting header pointer from laszip writer\n");
+      byebye(true, 1, laszip_writer);
+    }
+
+    // populate the header
+
+    header->file_source_ID = 4711;
+    header->global_encoding = (1<<0);             // see LAS specification for details
+    header->version_major = 1;
+    header->version_minor = 2;
+    strncpy(header->system_identifier, "LASzip DLL example 3", 32);
+    header->file_creation_day = 1;
+    header->file_creation_year = 2024;
+    header->point_data_format = 1;
+    header->point_data_record_length = 28;
+    header->number_of_point_records = num_points;
+    header->number_of_points_by_return[0] = 0;
+    header->number_of_points_by_return[1] = 0;
+    header->max_x = maxPt.x;
+    header->max_y = maxPt.y;
+    header->max_z = maxPt.z;
+    header->min_x = minPt.x;
+    header->min_y = minPt.y;
+    header->min_z = minPt.z;
+    char* file_name_out = 0;
+    file_name_out = LASCopyString(filename.c_str());
+    laszip_BOOL compress = (strstr(file_name_out, ".laz") != 0);
+
+    if (laszip_open_writer(laszip_writer, file_name_out, compress))
+    {
+      fprintf(stderr,"DLL ERROR: opening laszip writer for '%s'\n", filename);
+      byebye(true, 1, laszip_writer);
+    }
+
+    laszip_I64 p_count = 0;
+
+    for(int i = 0; i < num_points; i++){
+      pcl::PointXYZINormal pt = cloud->points[i];
+      laszip_point* point;
+      if (laszip_get_point_pointer(laszip_writer, &point))
+      {
+        fprintf(stderr,"DLL ERROR: getting point pointer from laszip writer\n");
+        byebye(true, 1, laszip_writer);
+      }
+      
+      laszip_F64 coordinates[3];
+      coordinates[0] = pt.x;
+      coordinates[1] = pt.y;
+      coordinates[2] = pt.z;
+
+      if (laszip_set_coordinates(laszip_writer, coordinates))
+      {
+        fprintf(stderr,"DLL ERROR: setting coordinates for point %I64d\n", p_count);
+        byebye(true, 1, laszip_writer);
+      }
+
+      point->intensity = pt.intensity;
+
+      if (laszip_write_point(laszip_writer))
+      {
+        fprintf(stderr,"DLL ERROR: writing point %I64d\n", p_count);
+        byebye(true, 1, laszip_writer);
+      }
+      p_count++;
+
+
+
+    }
+
+    if (laszip_get_point_count(laszip_writer, &p_count))
+    {
+      fprintf(stderr,"DLL ERROR: getting point count\n");
+      byebye(true, 1, laszip_writer);
+    }
+
+    fprintf(stderr,"successfully written %I64d points\n", p_count);
+
+    if (laszip_close_writer(laszip_writer))
+    {
+      fprintf(stderr,"DLL ERROR: closing laszip writer\n");
+      byebye(true, 1, laszip_writer);
+    }
+
+    if (laszip_destroy(laszip_writer))
+    {
+      fprintf(stderr,"DLL ERROR: destroying laszip writer\n");
+      byebye(true, 1);
+    }
+}
+bool find_best_camera_match(double lidar_time, int& best_id)
+{
+
+    ROS_WARN("lidar_time and best id: %lf, %d", lidar_time, best_id);
+
+    if (camera_time_buffer.empty())
+        return false;
+    int left = 0;
+    int right = camera_time_buffer.size() - 1;
+    int middle = 0;
+    while (left < right)
+    {
+        middle = left + (right - left) / 2;
+        if (camera_time_buffer[middle] > lidar_time)
+        {
+            right = middle;
+        }
+        else if (camera_time_buffer[middle] < lidar_time)
+        {
+            left = middle + 1;
+        }
+        else
+        {
+            best_id = middle;
+            return true;
+        }
+    }
+    best_id = middle;
+    double max_time_diff = 100;
+    ROS_WARN("lidar_time - camera_time_buffer[best_id]: %lf", lidar_time - camera_time_buffer[best_id]);
+    if (lidar_time - camera_time_buffer[best_id] > max_time_diff)
+        return false;
+    else
+        return true;
+}
+
+Eigen::Vector2d distort(Eigen::Vector2d point)
+{
+    double k1 = D_camera[0];
+    double k2 = D_camera[1];
+    double k3 = D_camera[4];
+    double p1 = D_camera[2];
+    double p2 = D_camera[3];
+
+    double x2 = point.x() * point.x();
+    double y2 = point.y() * point.y();
+
+    double r2 = x2 + y2;
+    double r4 = r2 * r2;
+    double r6 = r2 * r4;
+
+    double r_coeff = 1.0 + k1 * r2 + k2 * r4 + k3 * r6;
+    double t_coeff1 = 2.0 * point.x() * point.y();
+    double t_coeff2 = r2 + 2.0 * x2;
+    double t_coeff3 = r2 + 2.0 * y2;
+    double x = r_coeff * point.x() + p1 * t_coeff1 + p2 * t_coeff2;
+    double y = r_coeff * point.y() + p1 * t_coeff3 + p2 * t_coeff1;
+    return Eigen::Vector2d(x, y);
+
+}
+
+void generateColorMapNoEkf(sensor_msgs::ImagePtr msg_rgb, 
+                    Eigen::Isometry3d& camera_state, 
+                    Eigen::Isometry3d& lidar_state,
+                    pcl::PointCloud<pcl::PointXYZINormal>::Ptr& pc,
+                    Eigen::Matrix3d& extrinsic_r, 
+                    Eigen::Vector3d& extrinsic_t,
+                    pcl::PointCloud<pcl::PointXYZINormal>::Ptr& pc_sorted,
+                    pcl::PointCloud<pcl::PointXYZRGB>::Ptr& pc_color)
+{
+    Eigen::Isometry3d T_cl = camera_state.inverse() * lidar_state;
+    Eigen::Matrix3d Rcl = T_cl.rotation();
+    Eigen::Vector3d tcl = T_cl.translation();
+    Eigen::Matrix3d transposed_extrinsic_r  = extrinsic_r.transpose();
+    extrinsic_t = -1 * extrinsic_t;
+    
+    // ROS_WARN("extrinsic_r: \n %lf %lf %lf \n %lf %lf %lf \n %lf %lf %lf \n", extrinsic_r(0, 0), extrinsic_r(0, 1), extrinsic_r(0, 2), extrinsic_r(1, 0), extrinsic_r(1, 1), extrinsic_r(1, 2), extrinsic_r(2, 0), extrinsic_r(2, 1), extrinsic_r(2, 2));
+    // ROS_WARN("extrinsic_t: \n %lf %lf %lf \n", extrinsic_t(0), extrinsic_t(1), extrinsic_t(2));
+    // print out transposed extrinsic r 
+    // ROS_WARN("transposed_extrinsic_r: \n %lf %lf %lf \n %lf %lf %lf \n %lf %lf %lf \n", transposed_extrinsic_r(0, 0), 
+    // transposed_extrinsic_r(0, 1), transposed_extrinsic_r(0, 2), transposed_extrinsic_r(1, 0), transposed_extrinsic_r(1, 1), 
+    // transposed_extrinsic_r(1,2),transposed_extrinsic_r(2, 0), transposed_extrinsic_r(2,1), transposed_extrinsic_r(2,2));
+
+
+
+    cv::Mat rgb = cv_bridge::toCvCopy(*msg_rgb, "bgr8")->image;
+
+    // ROS_WARN("camera_state: \n %lf %lf %lf \n %lf %lf %lf \n %lf %lf %lf \n", camera_state(0, 0), camera_state(0, 1), camera_state(0, 2), camera_state(1, 0), camera_state(1, 1), camera_state(1, 2), camera_state(2, 0), camera_state(2, 1), camera_state(2, 2));
+    // log rcl and tcl
+    // ROS_WARN("rcl: \n %lf %lf %lf \n %lf %lf %lf \n %lf %lf %lf \n", Rcl(0, 0), Rcl(0, 1), Rcl(0, 2), Rcl(1, 0), Rcl(1, 1), Rcl(1, 2), Rcl(2, 0), Rcl(2, 1), Rcl(2, 2));
+    // ROS_WARN("tcl: \n %lf %lf %lf \n", tcl(0), tcl(1), tcl(2));
+    
+    if(0){
+        cv::Mat hsv;
+        cv::cvtColor(rgb, hsv, cv::COLOR_BGR2HSV);
+
+        // 调整饱和度和亮度
+        float saturation_scale = 1.5;  // 饱和度增加 50%
+        float brightness_scale = 1.5;  // 亮度增加 50%
+        for (int y = 0; y < hsv.rows; y++) {
+            for (int x = 0; x < hsv.cols; x++) {
+                hsv.at<cv::Vec3b>(y, x)[1] = cv::saturate_cast<uchar>(hsv.at<cv::Vec3b>(y, x)[1] * saturation_scale);
+                hsv.at<cv::Vec3b>(y, x)[2] = cv::saturate_cast<uchar>(hsv.at<cv::Vec3b>(y, x)[2] * brightness_scale);
+            }
+        }
+
+        // 转换回 BGR 色彩空间
+        cv::Mat adjusted_image;
+        cv::cvtColor(hsv, adjusted_image, cv::COLOR_HSV2BGR);
+        rgb = adjusted_image;
+
+    }
+    
+
+    // cv::imwrite("/home/gabriel/fast_lio_color_ws/src/FAST-LIO-COLOR-MAPPING/PCD/image.png", adjusted_image);
+    // int skip_factor = 1; 
+
+    // exit(0);
+    // ROS_WARN("is points size same as sorted points size: %d %d", pc->points.size(), pc_sorted->points.size());
+    cv::Scalar point_color(0, 0, 0); 
+
+    vector<vector<int>> vu;
+    
+    for (int i = 0; i < pc->points.size(); i++)
+    {
+        Eigen::Vector3d point_pc = {pc->points[i].x, pc->points[i].y, pc->points[i].z};
+        Eigen::Vector3d point_camera = Rcl * point_pc + tcl;
+
+        Eigen::Vector3d point_pcl_sorted = {pc_sorted->points[i].x, pc_sorted->points[i].y, pc_sorted->points[i].z};
+        Eigen::Vector3d point_pcl_sorted_camera = transposed_extrinsic_r * point_pcl_sorted + extrinsic_t;
+        
+        // ROS_WARN("point_pc: %lf %lf %lf", point_pcl_sorted.x(), point_pcl_sorted.y(), point_pcl_sorted.z());
+        // ROS_WARN("point_camera: %lf %lf %lf", point_pcl_sorted_camera.x(), point_pcl_sorted_camera.y(), point_pcl_sorted_camera.z());
+
+        if (point_pcl_sorted_camera.z() > 0)
+        {
+            Eigen::Vector2d point_2d = (point_pcl_sorted_camera.head<2>() / point_pcl_sorted_camera.z()).eval();
+            Eigen::Vector2d point_2d_dis = distort(point_2d);
+            int u = static_cast<int>(K_camera[0] * point_2d_dis.x() + K_camera[2]);
+            int v = static_cast<int>(K_camera[4] * point_2d_dis.y() + K_camera[5]);
+
+            // vu.push_back({v,u});
+            // ROS_WARN("point_2d: %lf %lf", point_2d.x(), point_2d.y());
+            // ROS_WARN("point_2d_dis: %lf %lf", point_2d_dis.x(), point_2d_dis.y());
+            // ROS_WARN("u: %d, v: %d", u, v);
+            if (u >= 0 && u < rgb.cols && v >= 0 && v < rgb.rows)
+            {
+                pcl::PointXYZRGB point_rgb;
+                point_rgb.x = point_pc.x();
+                point_rgb.y = point_pc.y();
+                point_rgb.z = point_pc.z();
+                point_rgb.b = (rgb.at<cv::Vec3b>(v, u)[0]);
+                point_rgb.g = (rgb.at<cv::Vec3b>(v, u)[1]);
+                point_rgb.r = (rgb.at<cv::Vec3b>(v, u)[2]);
+                pc_color->push_back(point_rgb);       
+            }
+        }
+    }
+
+}
+
+
+
 
 // set initial guess
 void transformAssociateToMap() {
@@ -244,6 +640,8 @@ void laserCloudFullResHandler(
   fullResBuf.push(laserCloudFullRes2);
   mBuf.unlock();
 }
+
+
 
 // receive odomtry
 void laserOdometryHandler(const nav_msgs::Odometry::ConstPtr &laserOdometry) {
@@ -1013,6 +1411,7 @@ void process() {
 }
 
 int main(int argc, char **argv) {
+
   ros::init(argc, argv, "laserMapping");
   ros::NodeHandle nh;
 
@@ -1071,8 +1470,10 @@ int main(int argc, char **argv) {
 
 
   pcd_writer.writeBinary(pcd_save_path, *laserCloudWaitSave);
-
+  
+  
+  pclToLaszip(laserCloudWaitSave, pcd_save_path);
   // pcd_writer.writeBinary("/home/gabriel/loam_horizon_ws/src/livox_horizon_loam/PCD/PCD.pcd", *laserCloudWaitSave);
-
+  
   return 0;
 }
