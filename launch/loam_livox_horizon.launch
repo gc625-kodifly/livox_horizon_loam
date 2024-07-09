@@ -3,7 +3,7 @@
     <param name="scan_line" type="int" value="6" />
     <arg name="rosbag_dir" default="/home/admin/workspace/rosbags"/>
     <arg name="rosbag_name" default="none"/>
-    <arg name="pcd_save_path" default="/home/admin/workspace/src/PCD/PCD.pcd" />
+    <arg name="pcd_save_path" default="/home/admin/workspace/src/PCD/PCD.las" />
     <!-- if 1, do mapping 10 Hz, if 2, do mapping 5 Hz. Suggest to use 1, it will adjust frequence automaticlly -->
     <param name="mapping_skip_frame" type="int" value="1" />
 
@@ -30,5 +30,7 @@
     <group if="$(arg rviz)">
         <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find loam_horizon)/rviz_cfg/loam_horizon.rviz" />
     </group>
-    <node name="delay" pkg="rosbag" type="play" args="--clock --delay=5 --rate=2 $(arg rosbag_dir)/$(arg rosbag_name)" output="screen" required="true"/>
+
+
+
 </launch>

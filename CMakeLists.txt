@@ -40,7 +40,7 @@ include_directories(
   ${OpenCV_INCLUDE_DIRS}
   ${libLAS_INCLUDE_DIRS}
   ${LASZIP_INCLUDE_DIRS}
-  /lib/x86_64-linux-gnu
+  # /lib/x86_64-linux-gnu
   # /usr/local/include/liblas  # Add this to include directories
 )
 

@@ -37,6 +37,7 @@
 #include <geometry_msgs/PoseStamped.h>
 #include <loam_horizon/common.h>
 #include <stdexcept>
+#include <liblas/capi/las_config.h>
 #include <laszip/laszip_api.h>
 #include <math.h>
 #include <nav_msgs/Odometry.h>
@@ -441,107 +442,6 @@ Eigen::Vector2d distort(Eigen::Vector2d point)
     return Eigen::Vector2d(x, y);
 
 }
-
-void generateColorMapNoEkf(sensor_msgs::ImagePtr msg_rgb, 
-                    Eigen::Isometry3d& camera_state, 
-                    Eigen::Isometry3d& lidar_state,
-                    pcl::PointCloud<pcl::PointXYZINormal>::Ptr& pc,
-                    Eigen::Matrix3d& extrinsic_r, 
-                    Eigen::Vector3d& extrinsic_t,
-                    pcl::PointCloud<pcl::PointXYZINormal>::Ptr& pc_sorted,
-                    pcl::PointCloud<pcl::PointXYZRGB>::Ptr& pc_color)
-{
-    Eigen::Isometry3d T_cl = camera_state.inverse() * lidar_state;
-    Eigen::Matrix3d Rcl = T_cl.rotation();
-    Eigen::Vector3d tcl = T_cl.translation();
-    Eigen::Matrix3d transposed_extrinsic_r  = extrinsic_r.transpose();
-    extrinsic_t = -1 * extrinsic_t;
-    
-    // ROS_WARN("extrinsic_r: \n %lf %lf %lf \n %lf %lf %lf \n %lf %lf %lf \n", extrinsic_r(0, 0), extrinsic_r(0, 1), extrinsic_r(0, 2), extrinsic_r(1, 0), extrinsic_r(1, 1), extrinsic_r(1, 2), extrinsic_r(2, 0), extrinsic_r(2, 1), extrinsic_r(2, 2));
-    // ROS_WARN("extrinsic_t: \n %lf %lf %lf \n", extrinsic_t(0), extrinsic_t(1), extrinsic_t(2));
-    // print out transposed extrinsic r 
-    // ROS_WARN("transposed_extrinsic_r: \n %lf %lf %lf \n %lf %lf %lf \n %lf %lf %lf \n", transposed_extrinsic_r(0, 0), 
-    // transposed_extrinsic_r(0, 1), transposed_extrinsic_r(0, 2), transposed_extrinsic_r(1, 0), transposed_extrinsic_r(1, 1), 
-    // transposed_extrinsic_r(1,2),transposed_extrinsic_r(2, 0), transposed_extrinsic_r(2,1), transposed_extrinsic_r(2,2));
-
-
-
-    cv::Mat rgb = cv_bridge::toCvCopy(*msg_rgb, "bgr8")->image;
-
-    // ROS_WARN("camera_state: \n %lf %lf %lf \n %lf %lf %lf \n %lf %lf %lf \n", camera_state(0, 0), camera_state(0, 1), camera_state(0, 2), camera_state(1, 0), camera_state(1, 1), camera_state(1, 2), camera_state(2, 0), camera_state(2, 1), camera_state(2, 2));
-    // log rcl and tcl
-    // ROS_WARN("rcl: \n %lf %lf %lf \n %lf %lf %lf \n %lf %lf %lf \n", Rcl(0, 0), Rcl(0, 1), Rcl(0, 2), Rcl(1, 0), Rcl(1, 1), Rcl(1, 2), Rcl(2, 0), Rcl(2, 1), Rcl(2, 2));
-    // ROS_WARN("tcl: \n %lf %lf %lf \n", tcl(0), tcl(1), tcl(2));
-    
-    if(0){
-        cv::Mat hsv;
-        cv::cvtColor(rgb, hsv, cv::COLOR_BGR2HSV);
-
-        // 调整饱和度和亮度
-        float saturation_scale = 1.5;  // 饱和度增加 50%
-        float brightness_scale = 1.5;  // 亮度增加 50%
-        for (int y = 0; y < hsv.rows; y++) {
-            for (int x = 0; x < hsv.cols; x++) {
-                hsv.at<cv::Vec3b>(y, x)[1] = cv::saturate_cast<uchar>(hsv.at<cv::Vec3b>(y, x)[1] * saturation_scale);
-                hsv.at<cv::Vec3b>(y, x)[2] = cv::saturate_cast<uchar>(hsv.at<cv::Vec3b>(y, x)[2] * brightness_scale);
-            }
-        }
-
-        // 转换回 BGR 色彩空间
-        cv::Mat adjusted_image;
-        cv::cvtColor(hsv, adjusted_image, cv::COLOR_HSV2BGR);
-        rgb = adjusted_image;
-
-    }
-    
-
-    // cv::imwrite("/home/gabriel/fast_lio_color_ws/src/FAST-LIO-COLOR-MAPPING/PCD/image.png", adjusted_image);
-    // int skip_factor = 1; 
-
-    // exit(0);
-    // ROS_WARN("is points size same as sorted points size: %d %d", pc->points.size(), pc_sorted->points.size());
-    cv::Scalar point_color(0, 0, 0); 
-
-    vector<vector<int>> vu;
-    
-    for (int i = 0; i < pc->points.size(); i++)
-    {
-        Eigen::Vector3d point_pc = {pc->points[i].x, pc->points[i].y, pc->points[i].z};
-        Eigen::Vector3d point_camera = Rcl * point_pc + tcl;
-
-        Eigen::Vector3d point_pcl_sorted = {pc_sorted->points[i].x, pc_sorted->points[i].y, pc_sorted->points[i].z};
-        Eigen::Vector3d point_pcl_sorted_camera = transposed_extrinsic_r * point_pcl_sorted + extrinsic_t;
-        
-        // ROS_WARN("point_pc: %lf %lf %lf", point_pcl_sorted.x(), point_pcl_sorted.y(), point_pcl_sorted.z());
-        // ROS_WARN("point_camera: %lf %lf %lf", point_pcl_sorted_camera.x(), point_pcl_sorted_camera.y(), point_pcl_sorted_camera.z());
-
-        if (point_pcl_sorted_camera.z() > 0)
-        {
-            Eigen::Vector2d point_2d = (point_pcl_sorted_camera.head<2>() / point_pcl_sorted_camera.z()).eval();
-            Eigen::Vector2d point_2d_dis = distort(point_2d);
-            int u = static_cast<int>(K_camera[0] * point_2d_dis.x() + K_camera[2]);
-            int v = static_cast<int>(K_camera[4] * point_2d_dis.y() + K_camera[5]);
-
-            // vu.push_back({v,u});
-            // ROS_WARN("point_2d: %lf %lf", point_2d.x(), point_2d.y());
-            // ROS_WARN("point_2d_dis: %lf %lf", point_2d_dis.x(), point_2d_dis.y());
-            // ROS_WARN("u: %d, v: %d", u, v);
-            if (u >= 0 && u < rgb.cols && v >= 0 && v < rgb.rows)
-            {
-                pcl::PointXYZRGB point_rgb;
-                point_rgb.x = point_pc.x();
-                point_rgb.y = point_pc.y();
-                point_rgb.z = point_pc.z();
-                point_rgb.b = (rgb.at<cv::Vec3b>(v, u)[0]);
-                point_rgb.g = (rgb.at<cv::Vec3b>(v, u)[1]);
-                point_rgb.r = (rgb.at<cv::Vec3b>(v, u)[2]);
-                pc_color->push_back(point_rgb);       
-            }
-        }
-    }
-
-}
-
 
 
 
