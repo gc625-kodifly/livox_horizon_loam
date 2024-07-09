@@ -263,7 +263,7 @@ void readLASHeader(const char* filename) {
 }
 void pclToLaszip(const pcl::PointCloud<pcl::PointXYZINormal>::Ptr& cloud, const std::string& filename) {
 
-
+    ROS_INFO("Trying to save: %s", filename.c_str());
     int num_points = cloud->size();
     // Variables to hold the min and max 3D coordinates
     pcl::PointXYZINormal minPt, maxPt;
@@ -271,13 +271,13 @@ void pclToLaszip(const pcl::PointCloud<pcl::PointXYZINormal>::Ptr& cloud, const 
     // Get the minimum and maximum points
     pcl::getMinMax3D(*cloud, minPt, maxPt);
     
-    std::cout << "Max x: " << maxPt.x << std::endl;
-    std::cout << "Max y: " << maxPt.y << std::endl;
-    std::cout << "Max z: " << maxPt.z << std::endl;
-    std::cout << "Min x: " << minPt.x << std::endl;
-    std::cout << "Min y: " << minPt.y << std::endl;
-    std::cout << "Min z: " << minPt.z << std::endl;
-    std::cout << "num pts: " << num_points << std::endl;
+    ROS_INFO("Max x: %f", maxPt.x);
+    ROS_INFO("Max y: %f", maxPt.y);
+    ROS_INFO("Max z: %f", maxPt.z);
+    ROS_INFO("Min x: %f", minPt.x);
+    ROS_INFO("Min y: %f", minPt.y);
+    ROS_INFO("Min z: %f", minPt.z);
+    ROS_INFO("Num pts: %d", num_points);
 
     laszip_POINTER laszip_writer;
 
@@ -617,10 +617,10 @@ void process() {
       if (timeLaserCloudCornerLast != timeLaserOdometry ||
           timeLaserCloudSurfLast != timeLaserOdometry ||
           timeLaserCloudFullRes != timeLaserOdometry) {
-        printf("time corner %f surf %f full %f odom %f \n",
+        ROS_INFO("time corner %f surf %f full %f odom %f \n",
                timeLaserCloudCornerLast, timeLaserCloudSurfLast,
                timeLaserCloudFullRes, timeLaserOdometry);
-        printf("unsync messeage!");
+        ROS_INFO("unsync messeage!");
         mBuf.unlock();
         break;
       }
@@ -924,15 +924,15 @@ void process() {
       downSizeFilterSurf.filter(*laserCloudSurfStack);
       int laserCloudSurfStackNum = laserCloudSurfStack->points.size();
 
-      printf("map prepare time %f ms\n", t_shift.toc());
-      printf("map corner num %d  surf num %d \n", laserCloudCornerFromMapNum,
+      ROS_INFO("map prepare time %f ms\n", t_shift.toc());
+      ROS_INFO("map corner num %d  surf num %d \n", laserCloudCornerFromMapNum,
              laserCloudSurfFromMapNum);
       if (laserCloudCornerFromMapNum > 10 && laserCloudSurfFromMapNum > 50) {
         TicToc t_opt;
         TicToc t_tree;
         kdtreeCornerFromMap->setInputCloud(laserCloudCornerFromMap);
         kdtreeSurfFromMap->setInputCloud(laserCloudSurfFromMap);
-        printf("build tree time %f ms \n", t_tree.toc());
+        ROS_INFO("build tree time %f ms \n", t_tree.toc());
 
         for (int iterCount = 0; iterCount < 2; iterCount++) {
           // ceres::LossFunction *loss_function = NULL;
@@ -1100,7 +1100,7 @@ void process() {
           // printf("surf num %d used surf num %d \n", laserCloudSurfStackNum,
           // surf_num);
 
-          printf("mapping data assosiation time %f ms \n", t_data.toc());
+          ROS_INFO("mapping data assosiation time %f ms \n", t_data.toc());
 
           TicToc t_solver;
           ceres::Solver::Options options;
@@ -1111,7 +1111,7 @@ void process() {
           options.gradient_check_relative_precision = 1e-4;
           ceres::Solver::Summary summary;
           ceres::Solve(options, &problem, &summary);
-          printf("mapping solver time %f ms \n", t_solver.toc());
+          ROS_INFO("mapping solver time %f ms \n", t_solver.toc());
           std::cout << summary.BriefReport() << std::endl;
           // printf("time %f \n", timeLaserOdometry);
           // printf("corner factor num %d surf factor num %d\n", corner_num,
@@ -1120,7 +1120,7 @@ void process() {
           // parameters[0], parameters[1], parameters[2],
           //	   parameters[4], parameters[5], parameters[6]);
         }
-        printf("mapping optimization time %f \n", t_opt.toc());
+        ROS_INFO("mapping optimization time %f \n", t_opt.toc());
       } else {
         ROS_WARN("time Map corner and surf num are not enough");
       }
@@ -1164,7 +1164,7 @@ void process() {
           laserCloudSurfArray[cubeInd]->push_back(pointSel);
         }
       }
-      printf("add points time %f ms\n", t_add.toc());
+      ROS_INFO("add points time %f ms\n", t_add.toc());
 
       TicToc t_filter;
       for (int i = 0; i < laserCloudValidNum; i++) {
@@ -1182,7 +1182,7 @@ void process() {
         downSizeFilterSurf.filter(*tmpSurf);
         laserCloudSurfArray[ind] = tmpSurf;
       }
-      printf("filter time %f ms \n", t_filter.toc());
+      ROS_INFO("filter time %f ms \n", t_filter.toc());
 
       TicToc t_pub;
       // publish surround map for every 5 frame
@@ -1265,9 +1265,9 @@ void process() {
 
 
 
-      printf("mapping pub time %f ms \n", t_pub.toc());
+      ROS_INFO("mapping pub time %f ms \n", t_pub.toc());
 
-      printf("whole mapping time %f ms +++++\n", t_whole.toc());
+      ROS_INFO("whole mapping time %f ms +++++\n", t_whole.toc());
 
       nav_msgs::Odometry odomAftMapped;
       odomAftMapped.header.frame_id = "/camera_init";
@@ -1321,7 +1321,7 @@ int main(int argc, char **argv) {
   nh.param<float>("mapping_line_resolution", lineRes, 0.4);
   nh.param<float>("mapping_plane_resolution", planeRes, 0.8);
   nh.param<std::string>("pcd_save_path",pcd_save_path,"/home/admin/workspace/src/PCD/PCD.pcd");
-  printf("line resolution %f plane resolution %f \n", lineRes, planeRes);
+  ROS_INFO("line resolution %f plane resolution %f \n", lineRes, planeRes);
   downSizeFilterCorner.setLeafSize(lineRes, lineRes, lineRes);
   downSizeFilterSurf.setLeafSize(planeRes, planeRes, planeRes);
 
@@ -1366,10 +1366,8 @@ int main(int argc, char **argv) {
 
   ros::spin();
 
-  pcl::PCDWriter pcd_writer;
-
-
-  pcd_writer.writeBinary(pcd_save_path, *laserCloudWaitSave);
+  // pcl::PCDWriter pcd_writer;
+  // pcd_writer.writeBinary(pcd_save_path, *laserCloudWaitSave);
   
   
   pclToLaszip(laserCloudWaitSave, pcd_save_path);

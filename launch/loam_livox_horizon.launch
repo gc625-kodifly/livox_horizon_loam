@@ -16,15 +16,18 @@
     <param name="mapping_plane_resolution" type="double" value="0.6"/>
     <param name="pcd_save_path" type="string" value="$(arg pcd_save_path)"/>
 
-    <node pkg="loam_horizon" type="scanRegistration" name="scanRegistration" output="screen" >
+    <include file="$(find livox_ros_driver2)/launch_ROS1/msg_HAP.launch"></include>
+
+
+    <node pkg="loam_horizon" type="scanRegistration" name="scanRegistration" output="log" >
         <remap from="/livox_undistort" to="/livox_pcl0" />
     </node>
 
-    <node pkg="loam_horizon" type="laserOdometry" name="laserOdometry" output="screen" />
+    <node pkg="loam_horizon" type="laserOdometry" name="laserOdometry" output="log" />
 
-    <node pkg="loam_horizon" type="laserMapping" name="laserMapping" output="screen" />
+    <node pkg="loam_horizon" type="laserMapping" name="laserMapping" output="log" />
 
-    <node pkg="loam_horizon" type="livox_repub" name="livox_repub" output="screen" />
+    <node pkg="loam_horizon" type="livox_repub" name="livox_repub" output="log" />
 
     <arg name="rviz" default="false" />
     <group if="$(arg rviz)">
