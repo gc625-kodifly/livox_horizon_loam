@@ -1,0 +1,23 @@
+
+
+mapping:
+    extrinsic_T: [ 0,0,0 ]
+    extrinsic_R: [ 1, 0, 0,
+                   0, 1, 0,
+                   0, 0, 1]
+
+use_color: true
+
+
+color_mapping:
+
+    K_camera: [766.38136,   0     , 628.1358 ,
+           0     , 720.66146, 348.08063,
+           0     ,   0     ,   1.     ]
+    D_camera: [-0.327005, 0.077308, 0.000458, 0.002563, 0.000000]
+    time_offset_lidar_to_camera: 0                # ms         # lidar to camera
+
+    extrinsic_T: [0.0912564,-0.0806241, 0.109172]          # lidar to camera
+    extrinsic_R: [-0.00678679, -0.999977, 0.000102807,
+                   0.202001, -0.00147166, -0.979384,
+                   0.979361, -0.0066261, 0.202006]
